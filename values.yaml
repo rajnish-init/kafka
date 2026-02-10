@@ -1,0 +1,111 @@
+# =========================================================
+# Bitnami Kafka – Zookeeper mode (PLAINTEXT, DEV)
+# LEGACY IMAGES ONLY (NO KRaft)
+# =========================================================
+
+image:
+  registry: docker.io
+  repository: bitnamilegacy/kafka
+  tag: 3.3.2-debian-11-r11
+
+# ---------------------------------------------------------
+# Disable KRaft COMPLETELY
+# ---------------------------------------------------------
+kraft:
+  enabled: false
+
+controller:
+  replicaCount: 0
+
+# ---------------------------------------------------------
+# Kafka Brokers
+# ---------------------------------------------------------
+broker:
+  replicaCount: 3
+
+  configuration: ""
+
+  listeners:
+    client:
+      protocol: PLAINTEXT
+    interbroker:
+      protocol: PLAINTEXT
+
+  extraEnvVars:
+    - name: KAFKA_ENABLE_KRAFT
+      value: "no"
+    - name: ALLOW_PLAINTEXT_LISTENER
+      value: "yes"
+    # The "Magic" fix for the protocol error:
+    - name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP
+      value: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,CLIENT:PLAINTEXT"
+    - name: KAFKA_CFG_LISTENERS
+      value: "PLAINTEXT://:9092"
+    - name: KAFKA_CFG_ADVERTISED_LISTENERS
+      value: "PLAINTEXT://:9092"
+    - name: KAFKA_CFG_INTER_BROKER_LISTENER_NAME
+      value: "PLAINTEXT"
+    # Zookeeper connection using your confirmed service name
+    - name: KAFKA_CFG_ZOOKEEPER_CONNECT
+      value: "kafka-zookeeper:2181"
+
+  podSecurityContext:
+    enabled: true
+    fsGroup: 1001
+    supplementalGroups:
+      - 0
+
+  containerSecurityContext:
+    enabled: true
+    runAsUser: 1001
+    runAsGroup: 1001
+    readOnlyRootFilesystem: false
+    allowPrivilegeEscalation: true
+
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: managed-csi
+
+  tolerations:
+    - key: kubernetes.azure.com/scalesetpriority
+      operator: Equal
+      value: spot
+      effect: NoSchedule
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# ---------------------------------------------------------
+# ZooKeeper (LEGACY)
+# ---------------------------------------------------------
+zookeeper:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/zookeeper
+    tag: 3.8.1-debian-11-r16
+
+  livenessProbe:
+    enabled: false
+
+  readinessProbe:
+    enabled: false
+
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: managed-csi
+
+# ---------------------------------------------------------
+# Auth (DISABLED)
+# ---------------------------------------------------------
+auth:
+  enabled: false
