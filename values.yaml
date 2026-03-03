@@ -94,7 +94,7 @@ zookeeper:
     tag: 3.8.1-debian-11-r16
 
   livenessProbe:
-    enabled: false
+    enabled: true
 
   readinessProbe:
     enabled: false
