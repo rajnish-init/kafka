@@ -97,7 +97,7 @@ zookeeper:
     enabled: true
 
   readinessProbe:
-    enabled: false
+    enabled: true
 
   persistence:
     enabled: false
