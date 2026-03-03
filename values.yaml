@@ -86,7 +86,7 @@ broker:
 # ---------------------------------------------------------
 zookeeper:
   enabled: true
-  replicaCount: 4
+  replicaCount: 3
 
   image:
     registry: docker.io
