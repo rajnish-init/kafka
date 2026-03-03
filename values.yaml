@@ -100,7 +100,7 @@ zookeeper:
     enabled: false
 
   persistence:
-    enabled: true
+    enabled: false
     size: 5Gi
     storageClass: managed-csi
 
