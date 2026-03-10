@@ -1,0 +1,48 @@
+# Topic 1: User Signups
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: user-signups
+  labels:
+    strimzi.io/cluster: kafka  # <--- LINKS TO YOUR CLUSTER
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    retention.ms: 604800000    # 7 days
+---
+# Topic 2: Order Events (High throughput)
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: order-events
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 10               # More partitions for speed
+  replicas: 3
+  config:
+    retention.bytes: 1073741824 # 1GB limit per partition
+---
+# Topic 3: Notifications (Low priority)
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: notifications
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 1
+  replicas: 3
+
+---
+# Topic 4: Pipeline
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: pipeline
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 1
+  replicas: 3

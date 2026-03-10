@@ -15,13 +15,13 @@ kraft:
   enabled: false
 
 controller:
-  replicaCount: 0
+  replicaCount: 2
 
 # ---------------------------------------------------------
 # Kafka Brokers
 # ---------------------------------------------------------
 broker:
-  replicaCount: 3
+  replicaCount: 5
 
   configuration: ""
 

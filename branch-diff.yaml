@@ -1,0 +1,20 @@
+diff --git a/values.yaml b/values.yaml
+index d22a062..4af39de 100644
+--- a/values.yaml
++++ b/values.yaml
+@@ -86,7 +86,7 @@ broker:
+ # ---------------------------------------------------------
+ zookeeper:
+   enabled: true
+-  replicaCount: 2
++  replicaCount: 1
+ 
+   image:
+     registry: docker.io
+@@ -108,4 +108,4 @@ zookeeper:
+ # Auth (DISABLED)
+ # ---------------------------------------------------------
+ auth:
+-  enabled: false
++  enabled: false
+\ No newline at end of file
