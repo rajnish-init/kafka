@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-test-app-code
+  namespace: kafka
+data:
+  app.py: |
+    import time
+    from kafka import KafkaProducer, KafkaConsumer
+    from kafka.errors import NoBrokersAvailable
+    import threading
+    import sys
+
+    BOOTSTRAP_SERVER = 'kafka:9092'
+    TOPIC = 'test-pipeline'
+
+    def run_producer():
+        print("Starting Producer logic...")
+        try:
+            producer = KafkaProducer(
+                bootstrap_servers=[BOOTSTRAP_SERVER],
+                retries=5
+            )
+            while True:
+                msg = f"Validated message at {time.ctime()}".encode('utf-8')
+                producer.send(TOPIC, msg)
+                producer.flush()
+                print(f" [PRODUCER] Sent: {msg.decode()}")
+                time.sleep(60)
+        except Exception as e:
+            print(f"Producer Error: {e}")
+            sys.exit(1)
+
+    def run_consumer():
+        print("Starting Consumer logic...")
+        try:
+            consumer = KafkaConsumer(
+                TOPIC,
+                bootstrap_servers=[BOOTSTRAP_SERVER],
+                auto_offset_reset='earliest',
+                group_id='validation-group'
+            )
+            for msg in consumer:
+                print(f" [CONSUMER] Received: {msg.value.decode()}")
+        except Exception as e:
+            print(f"Consumer Error: {e}")
+            sys.exit(1)
+
+    if __name__ == "__main__":
+        # Give the broker a moment to register the topic if it's new
+        time.sleep(2) 
+        threading.Thread(target=run_producer, daemon=True).start()
+        run_consumer()
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kafka-validation-app
+  namespace: kafka
+  labels:
+    app: kafka-tester
+spec:
+  tolerations:
+    - key: "kubernetes.azure.com/scalesetpriority"
+      operator: "Equal"
+      value: "spot"
+      effect: "NoSchedule"
+  containers:
+  - name: test-container
+    image: python:3.9-slim
+    command: ["/bin/sh", "-c"]
+    # We use a subshell to install the library before running the script
+    args:
+      - pip install kafka-python;
+        python /mnt/script/app.py;
+    
+    # --- RESOURCE LIMITS ADDED HERE ---
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"
+    # ----------------------------------
+
+    volumeMounts:
+    - name: code-volume
+      mountPath: /mnt/script
+  volumes:
+  - name: code-volume
+    configMap:
+      name: kafka-test-app-code

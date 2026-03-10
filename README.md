@@ -1,268 +1,444 @@
-# E-Commerce Order Processing System
+# Kafka Demo — Complete Command Reference
 
-A microservices-based e-commerce order processing system built with Python, FastAPI, and Docker.
+A hands-on reference for deploying, running, and demoing Kafka on AKS using the files in this repository.
 
-## Overview
+---
 
-This project demonstrates a microservices architecture with three interconnected services that work together to process customer orders, manage inventory, and send notifications.
+## Table of Contents
 
-## Services
+- [Section 0 — Prerequisites](#section-0--prerequisites)
+- [Section 1 — Python File Guide](#section-1--python-file-guide)
+- [Section 2 — Environment Setup](#section-2--environment-setup)
+- [Section 3 — Deploy Kafka Cluster](#section-3--deploy-kafka-cluster)
+- [Section 4 — Verify Cluster Health](#section-4--verify-cluster-health)
+- [Section 5 — Topic Management](#section-5--topic-management)
+- [Section 6 — Automated In-Cluster Demo](#section-6--automated-in-cluster-demo)
+- [Section 7 — Manual Demo (Two Terminals)](#section-7--manual-demo-two-terminals)
+- [Section 8 — All-in-One Demo (app.py)](#section-8--all-in-one-demo-apppy)
+- [Section 9 — CLI Producer / Consumer](#section-9--cli-producer--consumer)
+- [Section 10 — Consumer Group Management](#section-10--consumer-group-management)
+- [Section 11 — Fault-Tolerance Demo](#section-11--fault-tolerance-demo)
+- [Section 12 — Consumer Scaling Demo](#section-12--consumer-scaling-demo)
+- [Section 13 — External Access (Local Machine)](#section-13--external-access-local-machine)
+- [Section 14 — Monitoring & Debug](#section-14--monitoring--debug)
+- [Section 15 — Cleanup](#section-15--cleanup)
 
-| Service | Port | Purpose |
-|---------|------|---------|
-| Order Service | 8080 | Orchestrates order processing, validates orders, coordinates with other services |
-| Inventory Service | 8081 | Manages product inventory, checks stock, reserves items |
-| Notification Service | 8082 | Sends order confirmations and status updates to customers |
+---
 
-## Architecture
-
-For a detailed architecture diagram and explanation, see [ARCHITECTURE.md](ARCHITECTURE.md).
-
-## Quick Start
-
-### Prerequisites
-
-- Docker
-- Docker Compose
-
-### Running the System
-
-1. Clone the repository
-2. Navigate to the project directory
-3. Run:
+## Section 0 — Prerequisites
 
 ```bash
-docker-compose up --build
+kubectl version --client          # Must be 1.25+
+helm version                      # Must be 3.x
+kubectl get nodes                 # AKS cluster must be accessible
 ```
 
-This will start all three services. The services will be available at:
-- Order Service: http://localhost:8080
-- Inventory Service: http://localhost:8081
-- Notification Service: http://localhost:8082
+---
 
-### Testing the System
+## Section 1 — Python File Guide
 
-#### 1. Check Service Health
+| File | Purpose | How to Run |
+|------|---------|------------|
+| `main/config.py` | **Single source of truth** for Kafka connection settings. Edit `BOOTSTRAP_SERVER` and `TOPIC` here before running any script. | _(imported by other scripts)_ |
+| `main/config_alternatives.py` | Alternative bootstrap server examples (internal ClusterIP vs external LoadBalancer). Swap values into `config.py` as needed. | _(reference only)_ |
+| `main/kafka_client.py` | **Core reusable library.** Exposes `run_producer()` and `run_consumer()` with retry logic, structured logging, and graceful Ctrl+C shutdown. | _(imported, do not run directly)_ |
+| `main/producer.py` | Thin entry-point that calls `run_producer()`. Sends a timestamped message every **5 seconds**. | `python producer.py` |
+| `main/consumer.py` | Thin entry-point that calls `run_consumer()`. Reads **all messages** from the topic (`earliest`) and prints them. | `python consumer.py` |
+| `main/app.py` | Standalone all-in-one script. Runs producer in a background thread and consumer in the foreground. Used by `kafka-test-deploy.yaml` for automated in-cluster validation. | `python app.py` |
+| `main/test_connection.py` | **Quick health-check.** Verifies the Kafka broker is reachable. Run this first to diagnose connectivity issues. | `python test_connection.py` |
+| `main/kafka-test-deploy.yaml` | Kubernetes manifest. Bundles `app.py` into a ConfigMap and deploys it as a Pod (`kafka-validation-app`) inside the cluster. | `kubectl apply -f` |
+| `main/values.yaml` | Helm values for the Bitnami Kafka chart. KRaft mode, 3 brokers, Azure `managed-csi` storage, LoadBalancer external access. | `helm upgrade --install` |
+
+---
+
+## Section 2 — Environment Setup
+
+> Run these once before anything else.
 
 ```bash
-curl http://localhost:8080/health
-curl http://localhost:8081/health
-curl http://localhost:8082/health
+# Create the kafka namespace
+kubectl create namespace kafka
+
+# Add Bitnami Helm repository
+helm repo add bitnami https://charts.bitnami.com/bitnami
+
+# Update local Helm chart cache
+helm repo update
 ```
 
-#### 2. View Available Inventory
+---
+
+## Section 3 — Deploy Kafka Cluster
+
+> Uses `main/values.yaml` — KRaft mode, 3 brokers, 10Gi storage per broker, Azure managed-csi.
 
 ```bash
-curl http://localhost:8081/inventory
+# Run from the root of the kafka/ repo
+helm upgrade --install kafka bitnami/kafka \
+  --namespace kafka \
+  --values main/values.yaml \
+  --wait --timeout 10m
 ```
 
-#### 3. Create an Order
+To upgrade after editing `values.yaml`:
+```bash
+helm upgrade kafka bitnami/kafka \
+  --namespace kafka \
+  --values main/values.yaml
+```
+
+---
+
+## Section 4 — Verify Cluster Health
 
 ```bash
-curl -X POST http://localhost:8080/orders \
-  -H "Content-Type: application/json" \
-  -d '{
-    "customer_name": "John Doe",
-    "customer_email": "john@example.com",
-    "items": [
-      {
-        "product_id": "PROD001",
-        "quantity": 2,
-        "price": 79.99
-      },
-      {
-        "product_id": "PROD002",
-        "quantity": 1,
-        "price": 29.99
-      }
-    ]
-  }'
+# Watch pods until all brokers show Running (Ctrl+C to stop)
+kubectl get pods -n kafka -w
+
+# Expected:
+#   kafka-broker-0     1/1     Running
+#   kafka-broker-1     1/1     Running
+#   kafka-broker-2     1/1     Running
+
+# Check all resources (pods, services, PVCs)
+kubectl get all -n kafka
+
+# Check Kafka services and their IPs/ports
+kubectl get svc -n kafka
+
+# Check persistent volume claims
+kubectl get pvc -n kafka
+
+# View live broker logs
+kubectl logs kafka-broker-0 -n kafka --tail=50
 ```
 
-#### 4. Retrieve Order Details
+---
 
-Replace `{order_id}` with the actual order ID returned from step 3:
+## Section 5 — Topic Management
+
+> All `kafka-topics.sh` commands run inside a Kafka broker or debug pod.
+
+### 5.1 Create a debug client pod
 
 ```bash
-curl http://localhost:8080/orders/{order_id}
+kubectl run kafka-client \
+  --restart='Never' \
+  --image docker.io/bitnami/kafka:3.9.0 \
+  --namespace kafka \
+  --command -- sleep infinity
+
+# Shell into the client pod
+kubectl exec -it kafka-client -n kafka -- bash
 ```
 
-#### 5. List All Orders
+### 5.2 Topic commands (run inside the pod shell)
 
 ```bash
-curl http://localhost:8080/orders
+# List ALL topics
+kafka-topics.sh --list --bootstrap-server kafka:9092
+
+# Create a topic
+kafka-topics.sh --create \
+  --bootstrap-server kafka:9092 \
+  --replication-factor 3 \
+  --partitions 3 \
+  --topic test-pipeline
+
+# Describe a topic (see partitions, leaders, replicas, ISR)
+kafka-topics.sh --describe \
+  --bootstrap-server kafka:9092 \
+  --topic test-pipeline
+
+# Expected:
+#   Topic: test-pipeline  PartitionCount: 3  ReplicationFactor: 3
+#   Partition: 0  Leader: 0  Replicas: 0,1,2  Isr: 0,1,2
+
+# Add more partitions to an existing topic
+kafka-topics.sh --alter \
+  --bootstrap-server kafka:9092 \
+  --topic test-pipeline \
+  --partitions 6
+
+# Delete a topic
+kafka-topics.sh --delete \
+  --bootstrap-server kafka:9092 \
+  --topic my-test-topic
+
+exit
 ```
 
-#### 6. View All Notifications
+---
+
+## Section 6 — Automated In-Cluster Demo
+
+> Easiest demo: one command deploys a pod that runs producer + consumer together inside the cluster.
 
 ```bash
-curl http://localhost:8082/notifications
+# Deploy the validation app (creates ConfigMap + Pod)
+kubectl apply -f main/kafka-test-deploy.yaml
+
+# Wait until pod is Running
+kubectl get pods -n kafka -l app=kafka-tester -w
+
+# Follow live logs
+kubectl logs kafka-validation-app -n kafka -f
 ```
 
-## How It Works
-
-When you place an order:
-
-1. **Order Service** receives the order request and validates the data
-2. **Order Service** calls **Inventory Service** to check stock availability for each item
-3. If stock is available, **Order Service** calls **Inventory Service** to reserve the items
-4. **Order Service** stores the confirmed order in memory
-5. **Order Service** calls **Notification Service** to send confirmation to the customer
-6. **Order Service** returns the order confirmation to you
-
-Each step is logged, allowing you to trace the flow of data through the system.
-
-## Directory Structure
-
+**Expected output (every 60 seconds):**
 ```
-.
-├── order-service/
-│   ├── main.py              # Order Service implementation
-│   ├── Dockerfile           # Docker configuration
-│   ├── requirements.txt    # Python dependencies
-│   └── README.md           # Service documentation
-├── inventory-service/
-│   ├── main.py              # Inventory Service implementation
-│   ├── Dockerfile           # Docker configuration
-│   ├── requirements.txt    # Python dependencies
-│   └── README.md           # Service documentation
-├── notification-service/
-│   ├── main.py              # Notification Service implementation
-│   ├── Dockerfile           # Docker configuration
-│   ├── requirements.txt    # Python dependencies
-│   └── README.md           # Service documentation
-├── docker-compose.yml       # Docker Compose orchestration
-├── ARCHITECTURE.md          # Detailed architecture documentation
-└── README.md               # This file
+Starting Producer logic...
+Starting Consumer logic...
+[PRODUCER] Sent: Validated message at Tue Mar 10 09:30:00 2026
+[CONSUMER] Received: Validated message at Tue Mar 10 09:30:00 2026
 ```
-
-## Technology Stack
-
-- **Language**: Python 3.11
-- **Framework**: FastAPI
-- **HTTP Client**: httpx (for synchronous calls between services)
-- **Containerization**: Docker
-- **Orchestration**: Docker Compose
-
-## Features
-
-- Microservices architecture with independent, scalable services
-- RESTful API design
-- In-memory data storage for demonstration purposes
-- Comprehensive logging at each step
-- Health checks for all services
-- Order validation and inventory reservation
-- Email and SMS notification simulation
-- Docker support for easy deployment
-
-## Learning Objectives
-
-This project is designed to help you learn:
-
-1. **Microservices Architecture**: How to break down a system into independent services
-2. **Service Communication**: How services communicate via synchronous HTTP calls
-3. **API Design**: RESTful API design principles with FastAPI
-4. **Containerization**: How to containerize applications with Docker
-5. **Orchestration**: How to manage multiple services with Docker Compose
-6. **Service Coordination**: How one service orchestrates the flow of data through other services
-7. **Error Handling**: How to handle failures and communicate errors between services
-
-## Service-Specific Documentation
-
-- [Order Service Documentation](order-service/README.md)
-- [Inventory Service Documentation](inventory-service/README.md)
-- [Notification Service Documentation](notification-service/README.md)
-
-## Development
-
-### Running Services Individually
-
-Each service can be run independently for development:
 
 ```bash
-# Order Service
-cd order-service
-pip install -r requirements.txt
-python main.py
+# If the pod crashes, check events
+kubectl describe pod kafka-validation-app -n kafka
 
-# Inventory Service
-cd inventory-service
-pip install -r requirements.txt
-python main.py
-
-# Notification Service
-cd notification-service
-pip install -r requirements.txt
-python main.py
+# Restart the validation app
+kubectl delete pod kafka-validation-app -n kafka
+kubectl apply -f main/kafka-test-deploy.yaml
 ```
 
-### Building Individual Docker Images
+---
+
+## Section 7 — Manual Demo (Two Terminals)
+
+> Runs `producer.py` + `consumer.py` inside a Python pod inside the cluster.
 
 ```bash
-# Build Order Service
-docker build -t order-service ./order-service
+# Create a Python pod in the 'test' namespace
+kubectl create namespace test 2>/dev/null || true
+kubectl run kafka-demo-pod \
+  --image=python:3.12-slim \
+  -n test \
+  --restart=Never \
+  --command -- sleep 3600
 
-# Build Inventory Service
-docker build -t inventory-service ./inventory-service
+# Wait for pod to be Ready
+kubectl get pod kafka-demo-pod -n test -w
 
-# Build Notification Service
-docker build -t notification-service ./notification-service
+# Install kafka-python library inside the pod
+kubectl exec -n test kafka-demo-pod -- pip install kafka-python
+
+# Copy all Python files into the pod
+kubectl cp main/config.py          test/kafka-demo-pod:/config.py
+kubectl cp main/kafka_client.py    test/kafka-demo-pod:/kafka_client.py
+kubectl cp main/producer.py        test/kafka-demo-pod:/producer.py
+kubectl cp main/consumer.py        test/kafka-demo-pod:/consumer.py
+kubectl cp main/test_connection.py test/kafka-demo-pod:/test_connection.py
+
+# (Optional) Verify broker connectivity first
+kubectl exec -n test kafka-demo-pod -- python -u /test_connection.py
 ```
 
-## Stopping the System
+**Terminal 1 — Start the Producer:**
+```bash
+kubectl exec -n test kafka-demo-pod -- python -u /producer.py
+# Sends a timestamped message every 5 seconds. Ctrl+C to stop.
+```
+
+**Terminal 2 — Start the Consumer:**
+```bash
+kubectl exec -n test kafka-demo-pod -- python -u /consumer.py
+# Reads ALL messages from the topic and prints them live. Ctrl+C to stop.
+```
+
+---
+
+## Section 8 — All-in-One Demo (app.py)
+
+> Runs producer + consumer in a single process. Producer runs as a daemon thread; consumer runs in the foreground.
 
 ```bash
-docker-compose down
+kubectl cp main/app.py test/kafka-demo-pod:/app.py
+kubectl exec -n test kafka-demo-pod -- python -u /app.py
 ```
 
-To stop and remove all containers, networks, and volumes:
+---
+
+## Section 9 — CLI Producer / Consumer
+
+> Built-in Kafka CLI tools — no Python needed. Great for quick sanity checks.
+
+**Terminal 1 — Produce via CLI:**
+```bash
+kubectl exec -it kafka-client -n kafka -- \
+  kafka-console-producer.sh \
+    --bootstrap-server kafka:9092 \
+    --topic test-pipeline
+# Type any message, press Enter. Ctrl+C to stop.
+```
+
+**Terminal 2 — Consume via CLI:**
+```bash
+# Read from beginning
+kubectl exec -it kafka-client -n kafka -- \
+  kafka-console-consumer.sh \
+    --bootstrap-server kafka:9092 \
+    --topic test-pipeline \
+    --from-beginning
+
+# Read only new messages
+kubectl exec -it kafka-client -n kafka -- \
+  kafka-console-consumer.sh \
+    --bootstrap-server kafka:9092 \
+    --topic test-pipeline
+```
+
+---
+
+## Section 10 — Consumer Group Management
+
+> Run these inside the `kafka-client` pod shell.
 
 ```bash
-docker-compose down -v
+# List all consumer groups
+kafka-consumer-groups.sh \
+  --bootstrap-server kafka:9092 \
+  --list
+
+# Describe a group (see lag / offsets per partition)
+kafka-consumer-groups.sh \
+  --bootstrap-server kafka:9092 \
+  --describe \
+  --group demo-group
+
+# Reset offsets to re-read all messages from the beginning
+kafka-consumer-groups.sh \
+  --bootstrap-server kafka:9092 \
+  --group demo-group \
+  --topic test-pipeline \
+  --reset-offsets \
+  --to-earliest \
+  --execute
 ```
 
-## Viewing Logs
+---
 
-View logs for all services:
+## Section 11 — Fault-Tolerance Demo
+
+> Kafka replicates data across 3 brokers. Delete one and watch Kafka self-heal.
+
 ```bash
-docker-compose logs
+# Delete one broker pod (StatefulSet will restart it automatically)
+kubectl delete pod kafka-broker-1 -n kafka
+
+# Watch it restart (~30-60 seconds)
+kubectl get pods -n kafka -w
+
+# Confirm the consumer still receives messages during recovery
+kubectl logs kafka-validation-app -n kafka -f
+
+# After recovery, verify ISR is full again
+kubectl exec -it kafka-client -n kafka -- \
+  kafka-topics.sh --describe \
+    --bootstrap-server kafka:9092 \
+    --topic test-pipeline
 ```
 
-View logs for a specific service:
+---
+
+## Section 12 — Consumer Scaling Demo
+
+> When multiple consumers share the same `group.id`, Kafka distributes partitions across them — each message goes to exactly **one** consumer.
+
+**Terminal 1:**
 ```bash
-docker-compose logs order-service
-docker-compose logs inventory-service
-docker-compose logs notification-service
+kubectl exec -n test kafka-demo-pod -- python -u /consumer.py
 ```
 
-Follow logs in real-time:
+**Terminal 2 (same group, different partition assignment):**
 ```bash
-docker-compose logs -f
+kubectl exec -n test kafka-demo-pod -- python -u /consumer.py
 ```
 
-## Limitations
+> **Tip:** To have two consumers each receive **all** messages independently, change `group_id` to a different value in `main/config.py` before running the second consumer.
 
-This is a demonstration project with the following limitations:
+---
 
-- **In-memory storage**: Data is lost when containers restart. In production, use a database.
-- **No authentication**: APIs are not secured. In production, add authentication and authorization.
-- **Synchronous communication**: Services communicate synchronously. In production, consider asynchronous messaging.
-- **No retry logic**: Failed HTTP calls are not retried. In production, implement retry mechanisms.
-- **No distributed tracing**: Tracing requests across services requires additional tools.
-- **Single instance scaling**: Current implementation doesn't support stateless scaling with in-memory storage.
+## Section 13 — External Access (Local Machine)
 
-## Future Enhancements
+External LoadBalancer IPs are configured in `main/values.yaml`:
 
-- Add persistent database storage
-- Implement asynchronous messaging with Kafka or RabbitMQ
-- Add an API Gateway
-- Implement distributed tracing
-- Add monitoring and alerting
-- Implement circuit breakers for resilience
-- Add retry mechanisms
-- Implement idempotent operations
-- Add authentication and authorization
+| Broker | External IP | Port |
+|--------|-------------|------|
+| 0 | `52.186.140.22` | 9094 |
+| 1 | `13.82.136.111` | 9094 |
+| 2 | `172.191.54.0` | 9094 |
 
-## License
+`main/config.py` currently points to `20.121.149.203:9094`. Update `BOOTSTRAP_SERVER` there if the IP changes.
 
-This is a learning project. Feel free to use it for educational purposes.
+```bash
+# Set up a local virtualenv
+cd main
+python -m venv venv
+
+# Activate (Windows)
+.\venv\Scripts\activate
+# Activate (Linux/macOS)
+# source venv/bin/activate
+
+pip install kafka-python
+
+# Check connectivity from your laptop
+python test_connection.py
+
+# Terminal 1 — Run producer locally
+python producer.py
+
+# Terminal 2 — Run consumer locally
+python consumer.py
+```
+
+---
+
+## Section 14 — Monitoring & Debug
+
+```bash
+# All resources in kafka namespace
+kubectl get all -n kafka
+
+# View Kafka broker configuration
+kubectl exec kafka-broker-0 -n kafka -- cat /bitnami/kafka/config/server.properties
+
+# Live broker logs
+kubectl logs kafka-broker-0 -n kafka -f
+
+# Describe pod for events (useful when a pod is stuck/crashing)
+kubectl describe pod kafka-broker-0 -n kafka
+kubectl describe pod kafka-validation-app -n kafka
+
+# Check Helm release status
+helm status kafka -n kafka
+
+# View currently deployed Helm values
+helm get values kafka -n kafka
+```
+
+---
+
+## Section 15 — Cleanup
+
+```bash
+# Remove automated validation app only
+kubectl delete -f main/kafka-test-deploy.yaml
+
+# Remove manual demo pods
+kubectl delete pod kafka-demo-pod -n test
+kubectl delete pod kafka-client -n kafka --ignore-not-found
+
+# ⚠ Remove the ENTIRE Kafka cluster (data will be permanently lost!)
+helm uninstall kafka -n kafka
+kubectl delete pvc --all -n kafka
+kubectl delete namespace kafka
+
+# Remove test namespace
+kubectl delete namespace test
+```
+
+---
+
+> **Full shell script version:** see [`command.sh`](./command.sh)

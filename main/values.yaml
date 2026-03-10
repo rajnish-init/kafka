@@ -1,0 +1,70 @@
+# ---------------------------------------------------------
+# KRaft Mode (Modern Kafka)
+# ---------------------------------------------------------
+kraft:
+  enabled: true
+  
+  tolerations:
+    - key: kubernetes.azure.com/scalesetpriority
+      operator: Equal
+      value: spot
+      effect: NoSchedule
+
+zookeeper:
+  enabled: false
+
+# ---------------------------------------------------------
+# Kafka Brokers
+# ---------------------------------------------------------
+broker:
+  replicaCount: 3
+
+  listeners:
+    client:
+      protocol: PLAINTEXT
+    controller:
+      protocol: PLAINTEXT
+    external:
+      protocol: PLAINTEXT
+
+  extraEnvVars:
+    - name: ALLOW_PLAINTEXT_LISTENER
+      value: "yes"
+
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: managed-csi
+
+  tolerations:
+    - key: kubernetes.azure.com/scalesetpriority
+      operator: Equal
+      value: spot
+      effect: NoSchedule
+
+# ---------------------------------------------------------
+# External Access
+# ---------------------------------------------------------
+externalAccess:
+  enabled: true
+
+  controller:
+    service:
+      type: ClusterIP   # controllers do NOT need public IP
+      domain: kafka-controller.kafka.svc.cluster.local
+
+  broker:
+    service:
+      type: LoadBalancer
+      ports:
+        external: 9094
+      loadBalancerIPs:
+        - "52.186.140.22"
+        - "13.82.136.111"
+        - "172.191.54.0"
+
+# ---------------------------------------------------------
+# Authentication
+# ---------------------------------------------------------
+auth:
+  enabled: false
